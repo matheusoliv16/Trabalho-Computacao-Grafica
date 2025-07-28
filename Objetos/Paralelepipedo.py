@@ -1,111 +1,174 @@
 import numpy as np
-from Utils.subdivisao_malha import subdivisao_malha
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.pyplot as plt
-from skimage.measure import marching_cubes
+import os
 
-def constroi_vertices_paralelepipedo(comprimento, largura, altura):
-    x, y, z = comprimento / 2, largura / 2, altura / 2
-    return np.array([
-        [-x, -y, -z, 1],
-        [ x, -y, -z, 1],
-        [ x,  y, -z, 1],
-        [-x,  y, -z, 1],
-        [-x, -y,  z, 1],
-        [ x, -y,  z, 1],
-        [ x,  y,  z, 1],
-        [-x,  y,  z, 1],
-    ])
-
-def constroi_faces_paralelepipedo():
-    return np.array([
-        [0, 1, 2], [0, 2, 3],      # Base inferior
-        [4, 7, 6], [4, 6, 5],      # Base superior
-        [0, 4, 5], [0, 5, 1],      # Face frontal
-        [1, 5, 6], [1, 6, 2],      # Lateral direita
-        [2, 6, 7], [2, 7, 3],      # Face traseira
-        [3, 7, 4], [3, 4, 0],      # Lateral esquerda
-    ])
-
-def constroi_arestas_paralelepipedo():
-    return np.array([
-        [0, 1], [1, 2], [2, 3], [3, 0],  # Base inferior
-        [4, 5], [5, 6], [6, 7], [7, 4],  # Base superior
-        [0, 4], [1, 5], [2, 6], [3, 7]   # Verticais
-    ])
-
-def plotar_paralelepipedo(comprimento, largura, altura, n_subdiv=1, cor="lightblue"):
+# Gera um grid regular de vértices para o paralelepípedo subdividido
+def constroi_vertices_paralelepipedo(comprimento, largura, altura, n_div=1):
     """
-    Plota o paralelepípedo usando faces analíticas (NÃO usa marching cubes).
+    Gera um grid de vértices 3D subdivididos igualmente nas três dimensões.
+    Retorna array (N, 3) com todos os vértices do cubo, em ordem de grade.
+
+    Args:
+        comprimento (float): O comprimento do paralelepípedo no eixo X.
+        largura (float): A largura do paralelepípedo no eixo Y.
+        altura (float): A altura do paralelepípedo no eixo Z.
+        n_div (int): Número de divisões em cada dimensão. n_div=1 cria um paralelepípedo simples.
+
+    Returns:
+        np.ndarray: Array de vértices (N, 3).
     """
-    vertices = constroi_vertices_paralelepipedo(comprimento, largura, altura)
-    faces = constroi_faces_paralelepipedo()
-    arestas = constroi_arestas_paralelepipedo()
+    # Cria pontos igualmente espaçados em cada eixo
+    x = np.linspace(-comprimento/2, comprimento/2, n_div+1)
+    y = np.linspace(-largura/2,    largura/2,    n_div+1)
+    z = np.linspace(-altura/2,     altura/2,     n_div+1)
+    xv, yv, zv = np.meshgrid(x, y, z, indexing='ij')
+    # Empacota os pontos em uma lista de vértices (N, 3)
+    vertices = np.column_stack([xv.ravel(), yv.ravel(), zv.ravel()])
+    return vertices
 
-    if n_subdiv > 1:
-        vertices, arestas, faces = subdivisao_malha(vertices, faces, n_subdiv)
+# Gera as faces triangulares do paralelepípedo subdividido
+def constroi_faces_paralelepipedo(n_div=1):
+    """
+    Gera as faces triangulares da malha subdividida do paralelepípedo.
+    Retorna array (M, 3) com índices de vértices para cada triângulo.
 
+    Args:
+        n_div (int): Número de divisões em cada dimensão, usado para calcular os índices dos vértices.
+
+    Returns:
+        np.ndarray: Array de faces (M, 3).
+    """
+    faces = []
+    n = n_div + 1  # Número de pontos por eixo
+
+    # Função lambda que calcula o índice linear no grid 3D a partir dos índices i, j, k
+    idx = lambda i, j, k: i * n * n + j * n + k
+
+    # Faces onde z é constante (bases inferior e superior)
+    for k in [0, n_div]:
+        for i in range(n_div):
+            for j in range(n_div):
+                v0 = idx(i,   j,   k)
+                v1 = idx(i+1, j,   k)
+                v2 = idx(i+1, j+1, k)
+                v3 = idx(i,   j+1, k)
+                faces.append([v0, v1, v2])
+                faces.append([v0, v2, v3])
+
+    # Faces onde y é constante (frontal e traseira)
+    for j in [0, n_div]:
+        for i in range(n_div):
+            for k in range(n_div):
+                v0 = idx(i,   j, k)
+                v1 = idx(i+1, j, k)
+                v2 = idx(i+1, j, k+1)
+                v3 = idx(i,   j, k+1)
+                faces.append([v0, v1, v2])
+                faces.append([v0, v2, v3])
+
+    # Faces onde x é constante (lateral esquerda e direita)
+    for i in [0, n_div]:
+        for j in range(n_div):
+            for k in range(n_div):
+                v0 = idx(i, j,   k)
+                v1 = idx(i, j+1, k)
+                v2 = idx(i, j+1, k+1)
+                v3 = idx(i, j,   k+1)
+                faces.append([v0, v1, v2])
+                faces.append([v0, v2, v3])
+
+    return np.array(faces)
+
+# Plota o paralelepípedo em 3D e salva a imagem se solicitado
+def plotar_paralelepipedo(comprimento, largura, altura, n_div=1, cor="lightblue", salvar_como=None):
+    """
+    Plota o paralelepípedo em 3D usando Matplotlib.
+
+    Args:
+        comprimento (float): O comprimento do paralelepípedo no eixo X.
+        largura (float): A largura do paralelepípedo no eixo Y.
+        altura (float): A altura do paralelepípedo no eixo Z.
+        n_div (int): Número de divisões para a malha.
+        cor (str): Cor das faces do paralelepípedo.
+        salvar_como (str, optional): Nome do arquivo para salvar a imagem na pasta 'imagens/'.
+                                     Se None, a imagem não é salva.
+    """
+    vertices = constroi_vertices_paralelepipedo(comprimento, largura, altura, n_div)
+    faces = constroi_faces_paralelepipedo(n_div)
     fig = plt.figure(figsize=(10, 10), dpi=120)
     ax = fig.add_subplot(111, projection='3d')
-    verts = vertices[:, :3]
-    poly3d = [[verts[i] for i in face] for face in faces]
-    collection = Poly3DCollection(poly3d, facecolors=cor, edgecolors="black", linewidths=1, alpha=1)
+
+    # Constrói uma lista de polígonos a partir das faces
+    poly3d = [[vertices[i] for i in face] for face in faces]
+    collection = Poly3DCollection(poly3d, facecolors=cor, edgecolors="black", linewidths=0.6, alpha=1)
     ax.add_collection3d(collection)
 
-    x, y, z = verts[:, 0], verts[:, 1], verts[:, 2]
-    max_range = np.array([x.max() - x.min(), y.max() - y.min(), z.max() - z.min()]).max() / 2.0
-    mid_x, mid_y, mid_z = (x.max() + x.min())/2, (y.max() + y.min())/2, (z.max() + z.min())/2
+    # Centraliza e ajusta limites do gráfico para melhor visualização
+    x, y, z = vertices[:, 0], vertices[:, 1], vertices[:, 2]
+    max_range = np.array([x.max()-x.min(), y.max()-y.min(), z.max()-z.min()]).max() / 2.0
+    mid_x = (x.max() + x.min()) / 2
+    mid_y = (y.max() + y.min()) / 2
+    mid_z = (z.max() + z.min()) / 2
     ax.set_xlim(mid_x - max_range, mid_x + max_range)
     ax.set_ylim(mid_y - max_range, mid_y + max_range)
     ax.set_zlim(mid_z - max_range, mid_z + max_range)
-
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
-    ax.set_title("Paralelepípedo")
-    plt.show()
-
-def constroi_paralelepipedo(comprimento, largura, altura, origem=np.array([0, 0, 0]), n_subdiv=1):
-    """
-    Retorna listas de vértices (xyz) e arestas (índices) do paralelepípedo.
-    """
-    vertices = constroi_vertices_paralelepipedo(comprimento, largura, altura)
-    faces = constroi_faces_paralelepipedo()
-    arestas = constroi_arestas_paralelepipedo()
-
-    if n_subdiv > 1:
-        vertices, arestas, faces = subdivisao_malha(vertices, faces, n_subdiv)
-
-    vertices[:, :3] += origem
-    return vertices[:, :3].tolist(), arestas.tolist()
-
-def campo_paralelepipedo(X, Y, Z, comprimento, largura, altura):
-    f = np.maximum(np.abs(X) - comprimento/2, np.maximum(np.abs(Y) - largura/2, np.abs(Z) - altura/2))
-    return f
-
-def plotar_paralelepipedo_marching_cubes(comprimento, largura, altura, grid_size=80, cor="deepskyblue"):
-    # Domínio do grid, um pouco maior que o cubo para garantir fechamento
-    pad_x = comprimento * 0.12
-    pad_y = largura * 0.12
-    pad_z = altura * 0.12
-    x = np.linspace(-comprimento/2 - pad_x, comprimento/2 + pad_x, grid_size)
-    y = np.linspace(-largura/2 - pad_y, largura/2 + pad_y, grid_size)
-    z = np.linspace(-altura/2 - pad_z, altura/2 + pad_z, grid_size)
-    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
-    campo = campo_paralelepipedo(X, Y, Z, comprimento, largura, altura)
-    verts, faces, _, _ = marching_cubes(campo, level=0.0, spacing=(x[1]-x[0], y[1]-y[0], z[1]-z[0]))
-
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(111, projection='3d')
-    mesh = Poly3DCollection(verts[faces], facecolor=cor, edgecolor='k', linewidths=0.3, alpha=1)
-    ax.add_collection3d(mesh)
-    ax.set_xlim(verts[:, 0].min(), verts[:, 0].max())
-    ax.set_ylim(verts[:, 1].min(), verts[:, 1].max())
-    ax.set_zlim(verts[:, 2].min(), verts[:, 2].max())
-    ax.set_box_aspect([comprimento, largura, altura])
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_title("Paralelepípedo (Marching Cubes)")
+    ax.set_title(f"Paralelepípedo")
     plt.tight_layout()
+
+    # Salva a imagem na pasta 'imagens', se solicitado
+    if salvar_como:
+        caminho_pasta = os.path.join(os.getcwd(), "imagens")
+        os.makedirs(caminho_pasta, exist_ok=True)
+        caminho_arquivo = os.path.join(caminho_pasta, salvar_como)
+        plt.savefig(caminho_arquivo, bbox_inches="tight")
     plt.show()
+
+# Gera os vértices e arestas (wireframe) do paralelepípedo subdividido
+def gerar_paralelepipedo(comprimento, largura, altura, n_div=1):
+    """
+    Retorna arrays de vértices (xyz) e arestas (índices) do paralelepípedo subdividido.
+
+    Args:
+        comprimento (float): O comprimento do paralelepípedo no eixo X.
+        largura (float): A largura do paralelepípedo no eixo Y.
+        altura (float): A altura do paralelepípedo no eixo Z.
+        n_div (int): Número de divisões para a malha.
+
+    Returns:
+        tuple: Uma tupla contendo:
+            - vertices (np.ndarray): Array de vértices (N, 3).
+            - arestas (np.ndarray): Array de arestas (M, 2), representando conexões entre vértices.
+    """
+    vertices = constroi_vertices_paralelepipedo(comprimento, largura, altura, n_div)
+    n = n_div + 1
+    arestas = []
+
+    # Ligações paralelas ao eixo x
+    for i in range(n_div):
+        for j in range(n):
+            for k in range(n):
+                v1 = i   * n * n + j * n + k
+                v2 = (i+1) * n * n + j * n + k
+                arestas.append([v1, v2])
+
+    # Ligações paralelas ao eixo y
+    for i in range(n):
+        for j in range(n_div):
+            for k in range(n):
+                v1 = i * n * n + j   * n + k
+                v2 = i * n * n + (j+1) * n + k
+                arestas.append([v1, v2])
+
+    # Ligações paralelas ao eixo z
+    for i in range(n):
+        for j in range(n):
+            for k in range(n_div):
+                v1 = i * n * n + j * n + k
+                v2 = i * n * n + j * n + (k+1)
+                arestas.append([v1, v2])
+
+    return vertices, np.array(arestas)
